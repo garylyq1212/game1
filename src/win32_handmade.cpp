@@ -203,7 +203,7 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND window, UINT uMsg, WPARAM wParam, 
         {
             if (vkCode == 'W')
             {
-                OutputDebugStringA("W\n");
+                //
             }
             else if (vkCode == 'A')
             {

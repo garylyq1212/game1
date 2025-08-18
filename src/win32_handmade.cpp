@@ -53,7 +53,7 @@ static x_input_set_state *XInputSetState_ = XInputSetStateStub;
 
 static void Win32LoadXInputDLL()
 {
-    HMODULE xInputLibrary = LoadLibraryA("XInput1_4.dll");
+    HMODULE xInputLibrary = LoadLibraryA("xinput1_3.dll");
     if (xInputLibrary)
     {
         XInputGetState = (x_input_get_state *)GetProcAddress(xInputLibrary, "XInputGetState");

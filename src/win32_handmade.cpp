@@ -346,10 +346,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                         int16 leftStickX = gamepad->sThumbLX;
                         int16 leftStickY = gamepad->sThumbLY;
 
-                        if (AButton)
-                        {
-                            yOffset += 2;
-                        }
+                        xOffset += leftStickX >> 12;
+                        yOffset -= leftStickY >> 12;
                     }
                     else
                     {

@@ -1,11 +1,13 @@
 #include <windows.h>
 #include <stdint.h>
 #include <Xinput.h>
+#include <xaudio2.h>
 
 typedef int8_t int8;
 typedef int16_t int16;
 typedef int32_t int32;
 typedef int64_t int64;
+typedef int32 bool32;
 
 typedef uint8_t uint8;
 typedef uint16_t uint16;
@@ -36,7 +38,8 @@ static Win32OffScreenBuffer globalBackBuffer;
 typedef X_INPUT_GET_STATE(x_input_get_state);
 X_INPUT_GET_STATE(XInputGetStateStub)
 {
-    return 0;
+    // NOTE(gary): in Windows, 0 is ERROR_SUCCESS = success so have to provide some error code in order to make this function failed.
+    return ERROR_NOT_CONNECTED;
 }
 static x_input_get_state *XInputGetState_ = XInputGetStateStub;
 #define XInputGetState XInputGetState_
@@ -46,18 +49,99 @@ static x_input_get_state *XInputGetState_ = XInputGetStateStub;
 typedef X_INPUT_SET_STATE(x_input_set_state);
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-    return 0;
+    // NOTE(gary): in Windows, 0 is ERROR_SUCCESS = success so have to provide some error code in order to make this function failed.
+    return ERROR_NOT_CONNECTED;
 }
 static x_input_set_state *XInputSetState_ = XInputSetStateStub;
 #define XInputSetState XInputSetState_
 
+// NOTE(gary): XAudio2Create
+#define X_AUDIO2_CREATE(name) HRESULT name(IXAudio2 **ppXAudio2, UINT32 Flags, XAUDIO2_PROCESSOR XAudio2Processor)
+typedef X_AUDIO2_CREATE(x_audio2_create);
+X_AUDIO2_CREATE(XAudio2CreateStub)
+{
+    return XAUDIO2_E_XAPO_CREATION_FAILED;
+}
+
 static void Win32LoadXInputDLL()
 {
-    HMODULE xInputLibrary = LoadLibraryA("xinput1_3.dll");
+    HMODULE xInputLibrary = LoadLibraryA("xinput1_4.dll");
+    if (!xInputLibrary)
+    {
+        // TODO(gary): Diagnostic
+
+        xInputLibrary = LoadLibraryA("xinput1_3.dll");
+    }
+
     if (xInputLibrary)
     {
         XInputGetState = (x_input_get_state *)GetProcAddress(xInputLibrary, "XInputGetState");
         XInputSetState = (x_input_set_state *)GetProcAddress(xInputLibrary, "XInputSetState");
+    }
+    else
+    {
+        // TODO(gary): Diagnostic
+    }
+}
+
+static void Win32InitXAudio2(int32 samplesPerSecond)
+{
+    HMODULE xAudioLibrary = LoadLibraryA("xaudio2_9.dll");
+    if (!xAudioLibrary)
+    {
+        // TODO(gary): Diagnostic
+
+        xAudioLibrary = LoadLibraryA("xaudio2_8.dll");
+    }
+
+    if (xAudioLibrary)
+    {
+        x_audio2_create *XAudio2Create = (x_audio2_create *)GetProcAddress(xAudioLibrary, "XAudio2Create");
+
+        IXAudio2 *audio = {};
+        if (SUCCEEDED(XAudio2Create(&audio, 0, XAUDIO2_DEFAULT_PROCESSOR)))
+        {
+            IXAudio2MasteringVoice *masteringVoice = {};
+            if (SUCCEEDED(audio->CreateMasteringVoice(&masteringVoice)))
+            {
+                IXAudio2SourceVoice *sourceVoice = {};
+                WAVEFORMATEX waveFormat = {};
+                waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+                waveFormat.nChannels = 2;
+                waveFormat.nSamplesPerSec = samplesPerSecond;
+                waveFormat.wBitsPerSample = 16;
+                // NOTE(gary): (nChannels * wBitsPerSample) / 8
+                waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
+                waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
+
+                if (SUCCEEDED(audio->CreateSourceVoice(&sourceVoice, &waveFormat)))
+                {
+                    // TODO(gary): not sure how to fill out buffer.AudioBytes
+                    XAUDIO2_BUFFER buffer = {};
+                    buffer.Flags = XAUDIO2_END_OF_STREAM;
+                    // buffer.AudioBytes = ;
+                    // buffer.pAudioData = ;
+                    // buffer.PlayBegin = ;
+                    // buffer.PlayLength = ;
+                    // buffer.LoopBegin = ;
+                    // buffer.LoopLength = ;
+                    // buffer.LoopCount = ;
+                    // buffer.pContext = ;
+                }
+                else
+                {
+                    // TODO(gary): Diagnostic
+                }
+            }
+            else
+            {
+                // TODO(gary): Diagnostic
+            }
+        }
+    }
+    else
+    {
+        // TODO(gary): Diagnostic
     }
 }
 
@@ -250,6 +334,13 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND window, UINT uMsg, WPARAM wParam, 
                 }
                 OutputDebugStringA("\n");
             }
+
+            // NOTE(gary): WM_SYSKEYDOWN & WM_SYSKEYUP message
+            bool32 altKeyWasDown = (lParam & (1 << 29));
+            if (vkCode == VK_F4 && altKeyWasDown)
+            {
+                isRunning = false;
+            }
         }
     }
     break;
@@ -299,6 +390,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
 
         if (window)
         {
+            Win32InitXAudio2(48000);
+
             HDC deviceContext = GetDC(window);
 
             int xOffset = 0;
@@ -351,7 +444,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                     }
                     else
                     {
-                        // Not Connected!!!
+                        // TODO(gary): Diagnostic
                     }
                 }
 

@@ -29,9 +29,13 @@ struct Win32WindowDimension
     int height;
 };
 
-// TODO(Gary): temporarily global for now
+// TODO(gary): temporarily global for now
 static bool isRunning;
 static Win32OffScreenBuffer globalBackBuffer;
+
+// NOTE(gary): Allocate a buffer of raw PCM samples in static memory. It's big enough for 10 seconds of stereo audio at 48 kHz.
+// (48 000 samples × 10 sec × 2 channels)
+static int16 audioBuffer[48000 * 10 * 2];
 
 // NOTE(gary): XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
@@ -107,6 +111,7 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
                 IXAudio2SourceVoice *sourceVoice = {};
                 WAVEFORMATEX waveFormat = {};
                 waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+                // NOTE(gary): Actually means “number of channels to generate” (1 means mono, 2 means stereo)
                 waveFormat.nChannels = 2;
                 waveFormat.nSamplesPerSec = samplesPerSecond;
                 waveFormat.wBitsPerSample = 16;
@@ -114,19 +119,57 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
                 waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
                 waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
 
+                // int samplesPerSecond = 48000;
+
+                // NOTE(gary): Frequency of the square wave
+                int toneHz = 256;
+                // NOTE(gary): Amplitude of the square wave (16-bit sample can go from -32768 to +32767)
+                int16 toneVolume = 3000;
+                // NOTE(gary): Keeps track of which sample we’re generating
+                uint32 runningSampleIndex = 0;
+                // NOTE(gary): How many samples make up one whole cycle of the wave (≈187 samples for 256 Hz at 48 kHz sampling rate)
+                int squareWavePeriod = samplesPerSecond / toneHz;
+                // NOTE(gary): Half a cycle (used to flip between +volume and −volume)
+                int halfSquareWavePeriod = squareWavePeriod / 2;
+                // NOTE(gary): Size of one sample frame: 16-bit × 2 channels = 4 bytes
+                int bytesPerSample = sizeof(int16) * 2;
+                // NOTE(gary): Duration of the tone
+                int seconds = 2;
+                // NOTE(gary): Total number of samples to generate
+                int totalSample = samplesPerSecond * seconds * waveFormat.nChannels;
+
                 if (SUCCEEDED(audio->CreateSourceVoice(&sourceVoice, &waveFormat)))
                 {
-                    // TODO(gary): not sure how to fill out buffer.AudioBytes
+                    for (int i = 0; i < totalSample; ++i)
+                    {
+                        /*
+                        NOTE(gary):
+                        | Item                                        | Meaning                                             |
+                        | ------------------------------------------- | --------------------------------------------------- |
+                        | `runningSampleIndex / halfSquareWavePeriod` | increases by 1 every half period                    |
+                        | `% 2`                                       | toggles between 0 and 1 every half period           |
+                        | `? toneVolume : -toneVolume`                | if the result is 1 → use +volume, otherwise −volume |
+                        */
+                        int16 sampleValue = ((runningSampleIndex++ / halfSquareWavePeriod) % 2) ? toneVolume : -toneVolume;
+
+                        // NOTE(gary): Write to both channels
+                        audioBuffer[i * 2 + 0] = sampleValue;
+                        audioBuffer[i * 2 + 1] = sampleValue;
+                    }
+
                     XAUDIO2_BUFFER buffer = {};
+                    buffer.pAudioData = (BYTE *)audioBuffer;
+                    buffer.AudioBytes = sizeof(audioBuffer);
                     buffer.Flags = XAUDIO2_END_OF_STREAM;
-                    // buffer.AudioBytes = ;
-                    // buffer.pAudioData = ;
-                    // buffer.PlayBegin = ;
-                    // buffer.PlayLength = ;
-                    // buffer.LoopBegin = ;
-                    // buffer.LoopLength = ;
-                    // buffer.LoopCount = ;
-                    // buffer.pContext = ;
+
+                    if (SUCCEEDED(sourceVoice->SubmitSourceBuffer(&buffer)))
+                    {
+                        sourceVoice->Start(0);
+                    }
+                    else
+                    {
+                        // TODO(gary): Diagnostic
+                    }
                 }
                 else
                 {
@@ -161,6 +204,7 @@ static Win32WindowDimension Win32GetWindowDimension(HWND window)
 static void RenderWeirdGradient(Win32OffScreenBuffer *buffer, int blueOffset, int greenOffset)
 {
     /*
+    NOTE(gary):
                                 WIDTH -------->
                                     0                                                  WIDTH * BytesPerPixel
         buffer.memory           0   BB GG RR xx   BB GG RR xx   BB GG RR xx   ...
@@ -177,6 +221,7 @@ static void RenderWeirdGradient(Win32OffScreenBuffer *buffer, int blueOffset, in
         for (int x = 0; x < buffer->width; ++x)
         {
             /*
+            NOTE(gary):
             Pixel in memory -> RR GG BB xx
             because of little endian architecture, it became
             Pixel in memory -> BB GG RR xx
@@ -398,7 +443,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
             int yOffset = 0;
 
             isRunning = true;
-
             while (isRunning)
             {
 

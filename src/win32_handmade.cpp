@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <Xinput.h>
 #include <xaudio2.h>
+#include <math.h>
+
+#define PI 3.14159265359f
 
 typedef int8_t int8;
 typedef int16_t int16;
@@ -29,13 +32,26 @@ struct Win32WindowDimension
     int height;
 };
 
-// TODO(gary): temporarily global for now
+struct Win32SoundOutput
+{
+    int samplesPerSecond;
+    int toneHz;
+    int16 toneVolume;
+    uint32 runningSampleIndex;
+    int wavePeriod;
+    int bytesPerSample;
+    int seconds;
+    int channels;
+    int totalSample;
+};
+
+// TODO(gary): Temporarily global for now
 static bool isRunning;
 static Win32OffScreenBuffer globalBackBuffer;
 
 // NOTE(gary): Allocate a buffer of raw PCM samples in static memory. It's big enough for 10 seconds of stereo audio at 48 kHz.
-// (48 000 samples × 10 sec × 2 channels)
-static int16 audioBuffer[48000 * 10 * 2];
+// (48 000 samples × 2 sec × 2 channels)
+static int16 audioBuffer[48000 * 2 * 2];
 
 // NOTE(gary): XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
@@ -53,7 +69,7 @@ static x_input_get_state *XInputGetState_ = XInputGetStateStub;
 typedef X_INPUT_SET_STATE(x_input_set_state);
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-    // NOTE(gary): in Windows, 0 is ERROR_SUCCESS = success so have to provide some error code in order to make this function failed.
+    // NOTE(gary): In Windows, 0 is ERROR_SUCCESS = success so have to provide some error code in order to make this function failed.
     return ERROR_NOT_CONNECTED;
 }
 static x_input_set_state *XInputSetState_ = XInputSetStateStub;
@@ -119,48 +135,45 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
                 waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
                 waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
 
-                // int samplesPerSecond = 48000;
+                // NOTE(gary): Sine wave
+                Win32SoundOutput soundOutput = {};
+                soundOutput.samplesPerSecond = 48000;
+                soundOutput.toneHz = 256;
+                soundOutput.toneVolume = 3000;
+                soundOutput.runningSampleIndex = 0;
+                soundOutput.wavePeriod = soundOutput.samplesPerSecond / soundOutput.toneHz;
+                soundOutput.bytesPerSample = sizeof(int16) * 2;
+                soundOutput.seconds = 2;
+                soundOutput.channels = waveFormat.nChannels;
+                soundOutput.totalSample = soundOutput.samplesPerSecond * soundOutput.seconds * soundOutput.channels;
 
-                // NOTE(gary): Frequency of the square wave
-                int toneHz = 256;
-                // NOTE(gary): Amplitude of the square wave (16-bit sample can go from -32768 to +32767)
-                int16 toneVolume = 3000;
-                // NOTE(gary): Keeps track of which sample we’re generating
-                uint32 runningSampleIndex = 0;
-                // NOTE(gary): How many samples make up one whole cycle of the wave (≈187 samples for 256 Hz at 48 kHz sampling rate)
-                int squareWavePeriod = samplesPerSecond / toneHz;
-                // NOTE(gary): Half a cycle (used to flip between +volume and −volume)
-                int halfSquareWavePeriod = squareWavePeriod / 2;
-                // NOTE(gary): Size of one sample frame: 16-bit × 2 channels = 4 bytes
-                int bytesPerSample = sizeof(int16) * 2;
-                // NOTE(gary): Duration of the tone
-                int seconds = 2;
-                // NOTE(gary): Total number of samples to generate
-                int totalSample = samplesPerSecond * seconds * waveFormat.nChannels;
+                // TODO(gary): Have issue on writting the memory location in for-loop audioBuffer[]
+                // int16 *audioBuffer = (int16 *)VirtualAlloc(0, soundOutput.totalSample, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                // if (!audioBuffer)
+                // {
+                //     OutputDebugStringA("Allocate failed!");
+                // }
 
                 if (SUCCEEDED(audio->CreateSourceVoice(&sourceVoice, &waveFormat)))
                 {
-                    for (int i = 0; i < totalSample; ++i)
+                    for (int i = 0; i < soundOutput.totalSample; ++i)
                     {
-                        /*
-                        NOTE(gary):
-                        | Item                                        | Meaning                                             |
-                        | ------------------------------------------- | --------------------------------------------------- |
-                        | `runningSampleIndex / halfSquareWavePeriod` | increases by 1 every half period                    |
-                        | `% 2`                                       | toggles between 0 and 1 every half period           |
-                        | `? toneVolume : -toneVolume`                | if the result is 1 → use +volume, otherwise −volume |
-                        */
-                        int16 sampleValue = ((runningSampleIndex++ / halfSquareWavePeriod) % 2) ? toneVolume : -toneVolume;
+                        float t = 2.0f * PI * (float)soundOutput.runningSampleIndex / (float)soundOutput.wavePeriod;
+                        float sineValue = sinf(t);
+                        int16 sampleValue = (int16)(sineValue * soundOutput.toneVolume);
 
-                        // NOTE(gary): Write to both channels
                         audioBuffer[i * 2 + 0] = sampleValue;
                         audioBuffer[i * 2 + 1] = sampleValue;
+                        ++soundOutput.runningSampleIndex;
                     }
 
                     XAUDIO2_BUFFER buffer = {};
                     buffer.pAudioData = (BYTE *)audioBuffer;
                     buffer.AudioBytes = sizeof(audioBuffer);
+                    // TODO(gary): Not working
+                    // buffer.AudioBytes = soundOutput.totalSample * sizeof(int16);
                     buffer.Flags = XAUDIO2_END_OF_STREAM;
+                    buffer.LoopCount = XAUDIO2_LOOP_INFINITE;
 
                     if (SUCCEEDED(sourceVoice->SubmitSourceBuffer(&buffer)))
                     {

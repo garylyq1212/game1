@@ -111,6 +111,13 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
     {
         // TODO(gary): Diagnostic
 
+        xAudioLibrary = LoadLibraryA("xaudio9_1_0.dll");
+    }
+
+    if (!xAudioLibrary)
+    {
+        // TODO(gary): Diagnostic
+
         xAudioLibrary = LoadLibraryA("xaudio2_8.dll");
     }
 
@@ -480,24 +487,24 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                         // Connected
                         XINPUT_GAMEPAD *gamepad = &controllerState.Gamepad;
 
-                        bool up = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
-                        bool down = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
-                        bool left = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
-                        bool right = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
-                        bool leftShoulder = (gamepad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
-                        bool rightShoulder = (gamepad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
-                        bool start = (gamepad->wButtons & XINPUT_GAMEPAD_START);
-                        bool back = (gamepad->wButtons & XINPUT_GAMEPAD_BACK);
-                        bool AButton = (gamepad->wButtons & XINPUT_GAMEPAD_A);
-                        bool BButton = (gamepad->wButtons & XINPUT_GAMEPAD_B);
-                        bool XButton = (gamepad->wButtons & XINPUT_GAMEPAD_X);
-                        bool YButton = (gamepad->wButtons & XINPUT_GAMEPAD_Y);
+                        bool32 up = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+                        bool32 down = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+                        bool32 left = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+                        bool32 right = (gamepad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+                        bool32 leftShoulder = (gamepad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+                        bool32 rightShoulder = (gamepad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+                        bool32 start = (gamepad->wButtons & XINPUT_GAMEPAD_START);
+                        bool32 back = (gamepad->wButtons & XINPUT_GAMEPAD_BACK);
+                        bool32 AButton = (gamepad->wButtons & XINPUT_GAMEPAD_A);
+                        bool32 BButton = (gamepad->wButtons & XINPUT_GAMEPAD_B);
+                        bool32 XButton = (gamepad->wButtons & XINPUT_GAMEPAD_X);
+                        bool32 YButton = (gamepad->wButtons & XINPUT_GAMEPAD_Y);
 
                         int16 leftStickX = gamepad->sThumbLX;
                         int16 leftStickY = gamepad->sThumbLY;
 
-                        xOffset += leftStickX >> 12;
-                        yOffset -= leftStickY >> 12;
+                        xOffset += leftStickX / 4096;
+                        yOffset += leftStickY / 4096;
                     }
                     else
                     {

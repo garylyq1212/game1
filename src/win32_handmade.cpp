@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <Xinput.h>
 #include <xaudio2.h>
 #include <math.h>
@@ -49,9 +50,8 @@ struct Win32SoundOutput
 static bool isRunning;
 static Win32OffScreenBuffer globalBackBuffer;
 
-// NOTE(gary): Allocate a buffer of raw PCM samples in static memory. It's big enough for 10 seconds of stereo audio at 48 kHz.
-// (48 000 samples × 2 sec × 2 channels)
-static int16 audioBuffer[48000 * 2 * 2];
+// NOTE(gary): Allocate a buffer of raw PCM samples in static memory.
+static int16 audioBufferSize[48000 * 2];
 
 // NOTE(gary): XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
@@ -152,11 +152,11 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
                 soundOutput.bytesPerSample = sizeof(int16) * 2;
                 soundOutput.seconds = 2;
                 soundOutput.channels = waveFormat.nChannels;
-                soundOutput.totalSample = soundOutput.samplesPerSecond * soundOutput.seconds * soundOutput.channels;
+                soundOutput.totalSample = soundOutput.samplesPerSecond * soundOutput.seconds;
 
-                // TODO(gary): Have issue on writting the memory location in for-loop audioBuffer[]
-                // int16 *audioBuffer = (int16 *)VirtualAlloc(0, soundOutput.totalSample, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-                // if (!audioBuffer)
+                // TODO(gary): Have issue on writting the memory location in for-loop audioBufferSize[]
+                // int16 *audioBufferSize = (int16 *)VirtualAlloc(0, soundOutput.totalSample, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                // if (!audioBufferSize)
                 // {
                 //     OutputDebugStringA("Allocate failed!");
                 // }
@@ -169,14 +169,14 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
                         float sineValue = sinf(t);
                         int16 sampleValue = (int16)(sineValue * soundOutput.toneVolume);
 
-                        audioBuffer[i * 2 + 0] = sampleValue;
-                        audioBuffer[i * 2 + 1] = sampleValue;
+                        audioBufferSize[i * 2 + 0] = sampleValue;
+                        audioBufferSize[i * 2 + 1] = sampleValue;
                         ++soundOutput.runningSampleIndex;
                     }
 
                     XAUDIO2_BUFFER buffer = {};
-                    buffer.pAudioData = (BYTE *)audioBuffer;
-                    buffer.AudioBytes = sizeof(audioBuffer);
+                    buffer.pAudioData = (BYTE *)audioBufferSize;
+                    buffer.AudioBytes = sizeof(audioBufferSize);
                     // TODO(gary): Not working
                     // buffer.AudioBytes = soundOutput.totalSample * sizeof(int16);
                     buffer.Flags = XAUDIO2_END_OF_STREAM;
@@ -434,6 +434,10 @@ LRESULT CALLBACK Win32MainWindowCallback(HWND window, UINT uMsg, WPARAM wParam, 
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline, int cmdshow)
 {
+    LARGE_INTEGER perfCounterFrequencyResult;
+    QueryPerformanceFrequency(&perfCounterFrequencyResult);
+    int64 perfCounterFreqency = perfCounterFrequencyResult.QuadPart;
+
     Win32LoadXInputDLL();
 
     WNDCLASSA windowClass = {};
@@ -463,6 +467,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
             int yOffset = 0;
 
             isRunning = true;
+
+            LARGE_INTEGER lastCounter;
+            QueryPerformanceCounter(&lastCounter);
+            uint64 lastCycleCount = __rdtsc();
+
             while (isRunning)
             {
 
@@ -524,6 +533,24 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                 ReleaseDC(window, deviceContext);
 
                 ++xOffset;
+
+                uint64 endCycleCount = __rdtsc();
+
+                LARGE_INTEGER endCounter;
+                QueryPerformanceCounter(&endCounter);
+
+                uint64 cycleElapsed = endCycleCount - lastCycleCount;
+                int64 counterElapsed = endCounter.QuadPart - lastCounter.QuadPart;
+                float msPerFrame = (1000.0f * (float)counterElapsed) / (float)perfCounterFreqency;
+                float fps = (float)(perfCounterFreqency / counterElapsed);
+                float megaCyclePerFrame = (float)(cycleElapsed / (1000.0f * 1000.0f));
+
+                char buffer[256];
+                sprintf(buffer, "%.2fms/frame, %.2ffps, %.2fmc/f\n", msPerFrame, fps, megaCyclePerFrame);
+                OutputDebugStringA(buffer);
+
+                lastCounter = endCounter;
+                lastCycleCount = endCycleCount;
             }
         }
         else

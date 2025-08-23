@@ -1,9 +1,25 @@
-#include <windows.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <Xinput.h>
-#include <xaudio2.h>
-#include <math.h>
+
+/*
+  TODO(gary):  THIS IS NOT A FINAL PLATFORM LAYER!!!
+
+  - Saved game locations
+  - Getting a handle to our own executable file
+  - Asset loading path
+  - Threading (launch a thread)
+  - Raw Input (support for multiple keyboards)
+  - Sleep/timeBeginPeriod
+  - ClipCursor() (for multimonitor support)
+  - Fullscreen support
+  - WM_SETCURSOR (control cursor visibility)
+  - QueryCancelAutoplay
+  - WM_ACTIVATEAPP (for when we are not the active application)
+  - Blit speed improvements (BitBlt)
+  - Hardware acceleration (OpenGL or Direct3D or BOTH??)
+  - GetKeyboardLayout (for French keyboards, international WASD support)
+
+  Just a partial list of stuff!!
+*/
 
 #define PI 3.14159265359f
 
@@ -17,6 +33,15 @@ typedef uint8_t uint8;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef uint64_t uint64;
+
+#include "handmade.h"
+#include "handmade.cpp"
+
+#include <windows.h>
+#include <stdio.h>
+#include <Xinput.h>
+#include <xaudio2.h>
+#include <math.h>
 
 struct Win32OffScreenBuffer
 {
@@ -169,8 +194,8 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
                         float sineValue = sinf(t);
                         int16 sampleValue = (int16)(sineValue * soundOutput.toneVolume);
 
-                        audioBufferSize[i * 2 + 0] = sampleValue;
-                        audioBufferSize[i * 2 + 1] = sampleValue;
+                        audioBufferSize[i] = sampleValue;
+                        audioBufferSize[i + 1] = sampleValue;
                         ++soundOutput.runningSampleIndex;
                     }
 
@@ -219,58 +244,6 @@ static Win32WindowDimension Win32GetWindowDimension(HWND window)
     result.height = clientRect.bottom - clientRect.top;
 
     return result;
-}
-
-static void RenderWeirdGradient(Win32OffScreenBuffer *buffer, int blueOffset, int greenOffset)
-{
-    /*
-    NOTE(gary):
-                                WIDTH -------->
-                                    0                                                  WIDTH * BytesPerPixel
-        buffer.memory           0   BB GG RR xx   BB GG RR xx   BB GG RR xx   ...
-        buffer.memory + pitch   1   BB GG RR xx   BB GG RR xx
-                                ..
-    */
-
-    uint8 *row = (uint8 *)buffer->memory;
-
-    for (int y = 0; y < buffer->height; ++y)
-    {
-        uint32 *pixel = (uint32 *)row;
-        // uint8 *pixelOneByte = (uint8 *)row;
-        for (int x = 0; x < buffer->width; ++x)
-        {
-            /*
-            NOTE(gary):
-            Pixel in memory -> RR GG BB xx
-            because of little endian architecture, it became
-            Pixel in memory -> BB GG RR xx
-            */
-            // *pixelOneByte = (uint8)(x + blueOffset);
-            // ++pixelOneByte;
-
-            // *pixelOneByte = (uint8)(y + greenOffset);
-            // ++pixelOneByte;
-
-            // *pixelOneByte = 0;
-            // ++pixelOneByte;
-
-            // *pixelOneByte = 0;
-            // ++pixelOneByte;
-
-            uint8 blue = x + blueOffset;
-            uint8 green = y + greenOffset;
-
-            /*
-            Pixel (32-bit)
-            memory:      BB GG RR xx
-            register:    xx RR GG BB
-            */
-            *pixel++ = ((green << 8) | blue);
-        }
-
-        row += buffer->pitch;
-    }
 }
 
 // DIB = Device-Independent Section (https://learn.microsoft.com/en-us/windows/win32/gdi/device-independent-bitmaps)
@@ -526,7 +499,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                 // vibration.wRightMotorSpeed = 60000;
                 // XInputSetState(0, &vibration);
 
-                RenderWeirdGradient(&globalBackBuffer, xOffset, yOffset);
+                // RenderWeirdGradient(&globalBackBuffer, xOffset, yOffset);
+
+                GameOffscreenBuffer gameOffscreenBuffer = {};
+                gameOffscreenBuffer.memory = globalBackBuffer.memory;
+                gameOffscreenBuffer.width = globalBackBuffer.width;
+                gameOffscreenBuffer.height = globalBackBuffer.height;
+                gameOffscreenBuffer.pitch = globalBackBuffer.pitch;
+                GameRenderAndUpdate(&gameOffscreenBuffer, xOffset, yOffset);
 
                 Win32WindowDimension dimension = Win32GetWindowDimension(window);
                 Win32DisplayBufferWindow(&globalBackBuffer, deviceContext, dimension.width, dimension.height);
@@ -545,9 +525,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                 float fps = (float)(perfCounterFreqency / counterElapsed);
                 float megaCyclePerFrame = (float)(cycleElapsed / (1000.0f * 1000.0f));
 
+#if 0
                 char buffer[256];
                 sprintf(buffer, "%.2fms/frame, %.2ffps, %.2fmc/f\n", msPerFrame, fps, megaCyclePerFrame);
                 OutputDebugStringA(buffer);
+#endif
 
                 lastCounter = endCounter;
                 lastCycleCount = endCycleCount;

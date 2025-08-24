@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdint.h>
 
 /*
@@ -41,7 +42,6 @@ typedef uint64_t uint64;
 #include <stdio.h>
 #include <Xinput.h>
 #include <xaudio2.h>
-#include <math.h>
 
 struct Win32OffScreenBuffer
 {
@@ -63,20 +63,17 @@ struct Win32SoundOutput
     int samplesPerSecond;
     int toneHz;
     int16 toneVolume;
-    uint32 runningSampleIndex;
-    int wavePeriod;
     int bytesPerSample;
-    int seconds;
+    int bufferSize;
+
+    // TODO(gary): Might be able to remove
     int channels;
-    int totalSample;
 };
 
 // TODO(gary): Temporarily global for now
 static bool isRunning;
 static Win32OffScreenBuffer globalBackBuffer;
-
-// NOTE(gary): Allocate a buffer of raw PCM samples in static memory.
-static int16 audioBufferSize[48000 * 2];
+static IXAudio2SourceVoice *sourceVoice;
 
 // NOTE(gary): XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
@@ -129,7 +126,7 @@ static void Win32LoadXInputDLL()
     }
 }
 
-static void Win32InitXAudio2(int32 samplesPerSecond)
+static void Win32InitXAudio2(Win32SoundOutput *soundOutput)
 {
     HMODULE xAudioLibrary = LoadLibraryA("xaudio2_9.dll");
     if (!xAudioLibrary)
@@ -150,82 +147,46 @@ static void Win32InitXAudio2(int32 samplesPerSecond)
     {
         x_audio2_create *XAudio2Create = (x_audio2_create *)GetProcAddress(xAudioLibrary, "XAudio2Create");
 
-        IXAudio2 *audio = {};
-        if (SUCCEEDED(XAudio2Create(&audio, 0, XAUDIO2_DEFAULT_PROCESSOR)))
+        HRESULT coInitializeResult = CoInitializeEx(0, COINIT_MULTITHREADED);
+        if (FAILED(coInitializeResult))
         {
-            IXAudio2MasteringVoice *masteringVoice = {};
-            if (SUCCEEDED(audio->CreateMasteringVoice(&masteringVoice)))
-            {
-                IXAudio2SourceVoice *sourceVoice = {};
-                WAVEFORMATEX waveFormat = {};
-                waveFormat.wFormatTag = WAVE_FORMAT_PCM;
-                // NOTE(gary): Actually means “number of channels to generate” (1 means mono, 2 means stereo)
-                waveFormat.nChannels = 2;
-                waveFormat.nSamplesPerSec = samplesPerSecond;
-                waveFormat.wBitsPerSample = 16;
-                // NOTE(gary): (nChannels * wBitsPerSample) / 8
-                waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
-                waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
-
-                // NOTE(gary): Sine wave
-                Win32SoundOutput soundOutput = {};
-                soundOutput.samplesPerSecond = 48000;
-                soundOutput.toneHz = 256;
-                soundOutput.toneVolume = 3000;
-                soundOutput.runningSampleIndex = 0;
-                soundOutput.wavePeriod = soundOutput.samplesPerSecond / soundOutput.toneHz;
-                soundOutput.bytesPerSample = sizeof(int16) * 2;
-                soundOutput.seconds = 2;
-                soundOutput.channels = waveFormat.nChannels;
-                soundOutput.totalSample = soundOutput.samplesPerSecond * soundOutput.seconds;
-
-                // TODO(gary): Have issue on writting the memory location in for-loop audioBufferSize[]
-                // int16 *audioBufferSize = (int16 *)VirtualAlloc(0, soundOutput.totalSample, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-                // if (!audioBufferSize)
-                // {
-                //     OutputDebugStringA("Allocate failed!");
-                // }
-
-                if (SUCCEEDED(audio->CreateSourceVoice(&sourceVoice, &waveFormat)))
-                {
-                    for (int i = 0; i < soundOutput.totalSample; ++i)
-                    {
-                        float t = 2.0f * PI * (float)soundOutput.runningSampleIndex / (float)soundOutput.wavePeriod;
-                        float sineValue = sinf(t);
-                        int16 sampleValue = (int16)(sineValue * soundOutput.toneVolume);
-
-                        audioBufferSize[i] = sampleValue;
-                        audioBufferSize[i + 1] = sampleValue;
-                        ++soundOutput.runningSampleIndex;
-                    }
-
-                    XAUDIO2_BUFFER buffer = {};
-                    buffer.pAudioData = (BYTE *)audioBufferSize;
-                    buffer.AudioBytes = sizeof(audioBufferSize);
-                    // TODO(gary): Not working
-                    // buffer.AudioBytes = soundOutput.totalSample * sizeof(int16);
-                    buffer.Flags = XAUDIO2_END_OF_STREAM;
-                    buffer.LoopCount = XAUDIO2_LOOP_INFINITE;
-
-                    if (SUCCEEDED(sourceVoice->SubmitSourceBuffer(&buffer)))
-                    {
-                        sourceVoice->Start(0);
-                    }
-                    else
-                    {
-                        // TODO(gary): Diagnostic
-                    }
-                }
-                else
-                {
-                    // TODO(gary): Diagnostic
-                }
-            }
-            else
-            {
-                // TODO(gary): Diagnostic
-            }
+            // TODO(gary): Diagnostic
         }
+
+        IXAudio2 *audio = {};
+        HRESULT xAudio2CreateResult = XAudio2Create(&audio, 0, XAUDIO2_DEFAULT_PROCESSOR);
+        if (FAILED(xAudio2CreateResult))
+        {
+            // TODO(gary): Diagnostic
+        }
+
+        IXAudio2MasteringVoice *masteringVoice = {};
+        HRESULT masteringVoiceResult = audio->CreateMasteringVoice(&masteringVoice);
+        if (FAILED(masteringVoiceResult))
+        {
+            // TODO(gary): Diagnostic
+        }
+
+        WAVEFORMATEX waveFormat = {};
+        waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+        // NOTE(gary): Actually means “number of channels to generate” (1 means mono, 2 means stereo)
+        waveFormat.nChannels = 2;
+        waveFormat.nSamplesPerSec = soundOutput->samplesPerSecond;
+        waveFormat.wBitsPerSample = 16;
+        // NOTE(gary): (nChannels * wBitsPerSample) / 8
+        waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
+        waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
+
+        // IXAudio2SourceVoice *sourceVoice = sourceVoices[0];
+
+        // TODO(gary): hacky source voices array
+        HRESULT sourceVoiceResult = audio->CreateSourceVoice(&sourceVoice, &waveFormat);
+        if (FAILED(sourceVoiceResult))
+        {
+            // TODO(gary): Diagnostic
+        }
+
+        sourceVoice->Start(0);
     }
     else
     {
@@ -432,8 +393,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
 
         if (window)
         {
-            Win32InitXAudio2(48000);
-
             HDC deviceContext = GetDC(window);
 
             int xOffset = 0;
@@ -441,13 +400,23 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
 
             isRunning = true;
 
+            Win32SoundOutput soundOutput = {};
+            soundOutput.samplesPerSecond = 48000;
+            soundOutput.toneHz = 256;
+            soundOutput.toneVolume = 3000;
+            soundOutput.bytesPerSample = sizeof(int16) * 2;
+            soundOutput.bufferSize = soundOutput.samplesPerSecond * soundOutput.bytesPerSample;
+
+            int16 *samples = (int16 *)VirtualAlloc(0, soundOutput.bufferSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
+            Win32InitXAudio2(&soundOutput);
+
             LARGE_INTEGER lastCounter;
             QueryPerformanceCounter(&lastCounter);
             uint64 lastCycleCount = __rdtsc();
 
             while (isRunning)
             {
-
                 MSG message;
                 while (PeekMessageA(&message, 0, 0, 0, PM_REMOVE))
                 {
@@ -487,6 +456,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
 
                         xOffset += leftStickX / 4096;
                         yOffset += leftStickY / 4096;
+
+                        soundOutput.toneHz = 512 + (int)(256.0f * ((float)leftStickY / 30000.0f));
                     }
                     else
                     {
@@ -499,14 +470,30 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR cmdline,
                 // vibration.wRightMotorSpeed = 60000;
                 // XInputSetState(0, &vibration);
 
-                // RenderWeirdGradient(&globalBackBuffer, xOffset, yOffset);
+                // int16 samples[48000 * 2];
+                GameSoundOutputBuffer soundBuffer = {};
+                soundBuffer.samplesPerSecond = soundOutput.samplesPerSecond;
+                soundBuffer.sampleCount = soundBuffer.samplesPerSecond * 2;
+                soundBuffer.samples = samples;
 
                 GameOffscreenBuffer gameOffscreenBuffer = {};
                 gameOffscreenBuffer.memory = globalBackBuffer.memory;
                 gameOffscreenBuffer.width = globalBackBuffer.width;
                 gameOffscreenBuffer.height = globalBackBuffer.height;
                 gameOffscreenBuffer.pitch = globalBackBuffer.pitch;
-                GameRenderAndUpdate(&gameOffscreenBuffer, xOffset, yOffset);
+
+                GameRenderAndUpdate(&gameOffscreenBuffer, &soundBuffer, xOffset, yOffset, soundOutput.toneHz);
+
+                if (sourceVoice)
+                {
+                    XAUDIO2_BUFFER buffer = {};
+                    buffer.pAudioData = (BYTE *)soundBuffer.samples;
+                    buffer.AudioBytes = soundOutput.bufferSize;
+                    buffer.Flags = XAUDIO2_END_OF_STREAM;
+                    buffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+
+                    sourceVoice->SubmitSourceBuffer(&buffer);
+                }
 
                 Win32WindowDimension dimension = Win32GetWindowDimension(window);
                 Win32DisplayBufferWindow(&globalBackBuffer, deviceContext, dimension.width, dimension.height);

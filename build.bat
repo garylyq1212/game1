@@ -11,6 +11,6 @@ REM cmd
 mkdir build
 pushd build
 
-cl -FC -Zi ..\src\win32_handmade.cpp user32.lib gdi32.lib
+cl -FC -Zi ..\src\win32_handmade.cpp user32.lib gdi32.lib ole32.lib
 
 popd

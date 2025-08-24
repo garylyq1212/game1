@@ -1,5 +1,20 @@
 #include "handmade.h"
 
+static void GameOutputSound(GameSoundOutputBuffer *soundBuffer, int toneHz)
+{
+    int16 toneVolume = 3000;
+
+    int16 *samplesOut = soundBuffer->samples;
+    for (int i = 0; i < soundBuffer->sampleCount / 2; ++i)
+    {
+        float t = (float)i / soundBuffer->samplesPerSecond;
+        float sineValue = sinf(2.0f * PI * toneHz * t);
+        int16 sampleValue = (int16)(sineValue * toneVolume);
+        *samplesOut++ = sampleValue;
+        *samplesOut++ = sampleValue;
+    }
+}
+
 static void RenderWeirdGradient(GameOffscreenBuffer *buffer, int blueOffset, int greenOffset)
 {
     /*
@@ -52,7 +67,9 @@ static void RenderWeirdGradient(GameOffscreenBuffer *buffer, int blueOffset, int
     }
 }
 
-static void GameRenderAndUpdate(GameOffscreenBuffer *buffer, int blueOffset, int greenOffset)
+static void GameRenderAndUpdate(GameOffscreenBuffer *buffer, GameSoundOutputBuffer *soundBuffer,
+                                int blueOffset, int greenOffset, int toneHz)
 {
+    GameOutputSound(soundBuffer, toneHz);
     RenderWeirdGradient(buffer, blueOffset, greenOffset);
 }
